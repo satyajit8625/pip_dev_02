@@ -7,8 +7,10 @@ from shiboken2 import wrapInstance
 import maya.OpenMayaUI as omui
 
 import importlib
-from core.create_folder_structure import CreateNewAsset
-importlib.reload(sys.modules['core.create_folder_structure'])
+from core.new_asset_creator import CreateNewAsset
+from core.publish_core import AssetPublishManager
+importlib.reload(sys.modules['core.new_asset_creator'])
+importlib.reload(sys.modules['core.publish_core'])
 
 
 def maya_main_window():
@@ -16,21 +18,29 @@ def maya_main_window():
     return wrapInstance(int(ptr), QtWidgets.QWidget)
 
 
+
+
 def load_config():
-    config_path = "/home/satyajit.p/Desktop/asset_maneger/asset_manager_tool/configs/config.json"
+   
+
+    script_dir = os.path.dirname(__file__)
+    config_path = os.path.join(script_dir, "..", "configs", "config.json")
+    config_path = os.path.abspath(config_path)
+
     try:
         with open(config_path, 'r') as file:
             config = json.load(file)
-            
-            # Check if 'project_name' exists in the config
+
             if "project_name" not in config:
                 raise ValueError("'project_name' is missing from the config file.")
             
             return config
     except Exception as e:
         print(f"Failed to load config: {e}")
-        raise  # Re-raise the error to stop further execution if the config is invalid
+        raise
 
+
+    
 
 class AssetManagerUI(QtWidgets.QDialog):
     def __init__(self, config, parent=maya_main_window()):
@@ -76,9 +86,6 @@ class AssetManagerUI(QtWidgets.QDialog):
         self.project_label = QtWidgets.QLabel(f"Project: {project_name}")
         self.project_label.setStyleSheet(self.LABEL_STYLE)
 
-        self.asset_name_label = QtWidgets.QLabel("Asset: N/A")
-        self.asset_name_label.setStyleSheet(self.LABEL_STYLE)
-
         user = getpass.getuser()
         self.user_name_label = QtWidgets.QLabel(f"User: {user}")
         self.user_name_label.setStyleSheet(self.LABEL_STYLE)
@@ -94,6 +101,12 @@ class AssetManagerUI(QtWidgets.QDialog):
         self.type_combo = QtWidgets.QComboBox()
         self.type_combo.addItems(["Prop", "Character", "Environment"])
         self.type_combo.setStyleSheet("font: 9pt 'Segoe UI';")
+
+        self.asset_name_label = QtWidgets.QLabel("Asset Name:")
+        self.asset_name_label.setStyleSheet(self.LABEL_STYLE)
+        self.asset_name_combo = QtWidgets.QComboBox()
+        self.asset_name_combo.addItems(["Asset1", "Asset2", "Asset3"])
+        self.asset_name_combo.setStyleSheet("font: 9pt 'Segoe UI';")
 
         self.assets_list = QtWidgets.QListWidget()
         self.assets_list.setStyleSheet(self.LIST_STYLE)
@@ -132,27 +145,36 @@ class AssetManagerUI(QtWidgets.QDialog):
         self.separator.setFrameShape(QtWidgets.QFrame.HLine)
         self.separator.setStyleSheet("color: #555;")
 
+
+
     def create_layouts(self):
         self.header = QtWidgets.QHBoxLayout()
         self.header.addWidget(self.project_label)
-        self.header.addStretch(1)
-        self.header.addWidget(self.asset_name_label)
         self.header.addStretch(1)
         self.header.addWidget(self.user_name_label)
         self.header.setContentsMargins(10, 10, 10, 0)
 
         self.filt = QtWidgets.QHBoxLayout()
         self.filt.setSpacing(20)
+
         self.dep_layout = QtWidgets.QHBoxLayout()
         self.dep_layout.setSpacing(4)
         self.dep_layout.addWidget(self.dep_label)
         self.dep_layout.addWidget(self.dep_combo)
+
         self.type_layout = QtWidgets.QHBoxLayout()
         self.type_layout.setSpacing(4)
         self.type_layout.addWidget(self.type_label)
         self.type_layout.addWidget(self.type_combo)
+
+        self.asset_name_layout = QtWidgets.QHBoxLayout()
+        self.asset_name_layout.setSpacing(4)
+        self.asset_name_layout.addWidget(self.asset_name_label)
+        self.asset_name_layout.addWidget(self.asset_name_combo)
+
         self.filt.addLayout(self.dep_layout)
         self.filt.addLayout(self.type_layout)
+        self.filt.addLayout(self.asset_name_layout)
         self.filt.addStretch()
         self.filt.setContentsMargins(10, 0, 10, 0)
 
@@ -206,6 +228,8 @@ class AssetManagerUI(QtWidgets.QDialog):
 
         self.setLayout(self.main)
 
+
+
     def create_connections(self):
         self.publish_checkbox.toggled.connect(self.toggle_publish_button)
         self.create_asset_btn.clicked.connect(self.create_new_asset)
@@ -235,11 +259,11 @@ class AssetManagerUI(QtWidgets.QDialog):
             return
 
         asset_creator = CreateNewAsset()
-        department_list, asset_type = self.get_ui_info_values()
+        department_list, asset_type,_= self.get_ui_info_values()
 
         # Retrieve base path and project name from the config
-        base_path = self.config.get("base_path", "/home/satyajit.p/Desktop/proj")  # Default if not found
-        project_name = self.config.get("project_name", "Unknown Project")  # Default if not found
+        base_path = self.config.get("base_path")  # Default if not found
+        project_name = self.config.get("project_name")  # Default if not found
 
         # Construct the full path
         full_path = os.path.join(base_path, project_name, "asset")
@@ -249,8 +273,18 @@ class AssetManagerUI(QtWidgets.QDialog):
             # Now create the asset under each department
             asset_creator.create_new_asset(full_path, department, asset_type, text)
 
+    def publish(self):
+
+        # Retrieve base path and project name from the config
+        base_path = self.config.get("base_path")  # Default if not found
+        project_name = self.config.get("project_name")  # Default if not found
+        # Construct the full path
+        full_path = os.path.join(base_path, project_name, "asset")
+
+        _, asset_type,current_department= self.get_ui_info_values()
 
 
+        AssetPublishManager.prepare_publish_folder(asset_dir_path=full_path,department_name=current_department,)
 
     def check_comment_and_publish(self):
         comment = self.comment_box.toPlainText().strip()
@@ -259,15 +293,18 @@ class AssetManagerUI(QtWidgets.QDialog):
         else:
             print(f"Publish comment: {comment}")
 
+
     def get_ui_info_values(self):
         # Get the asset type (the selected item in the asset type combo box)
         asset_type = self.type_combo.currentText()
 
+        # Get the current department (selected item in the department combo box)
+        current_department = self.dep_combo.currentText()
+
         # Get all department names (items in the department combo box)
         department_list = [self.dep_combo.itemText(i) for i in range(self.dep_combo.count())]
 
-        return department_list, asset_type
-
+        return department_list, asset_type, current_department
 
 
 def show_asset_manager_ui():
