@@ -9,43 +9,55 @@ import maya.OpenMayaUI as omui
 import importlib
 from core.new_asset_creator import CreateNewAsset
 from core.publish_core import AssetPublishManager
+from core.utils import FileUtils
 importlib.reload(sys.modules['core.new_asset_creator'])
 importlib.reload(sys.modules['core.publish_core'])
-
+importlib.reload(sys.modules['core.utils'])
 
 def maya_main_window():
     ptr = omui.MQtUtil.mainWindow()
     return wrapInstance(int(ptr), QtWidgets.QWidget)
 
-
-
-
 def load_config():
-   
-
+    # Get the script's directory dynamically
     script_dir = os.path.dirname(__file__)
+    
+    # Construct the path to the config file relative to the script's directory
     config_path = os.path.join(script_dir, "..", "configs", "config.json")
-    config_path = os.path.abspath(config_path)
-
+    config_path = os.path.abspath(config_path)  # Ensure it's an absolute path
+    print(config_path)
     try:
         with open(config_path, 'r') as file:
             config = json.load(file)
 
             if "project_name" not in config:
                 raise ValueError("'project_name' is missing from the config file.")
-            
+            if "project_path" not in config:
+                raise ValueError("'project_path' is missing from the config file.")
+
             return config
     except Exception as e:
         print(f"Failed to load config: {e}")
         raise
 
 
-    
 
 class AssetManagerUI(QtWidgets.QDialog):
     def __init__(self, config, parent=maya_main_window()):
         super(AssetManagerUI, self).__init__(parent)
         self.config = config
+
+        # Retrieve base path and project name from the config
+        self.prj_base_path = self.config.get("project_path")
+        self.project_name = self.config.get("project_name")
+
+        if not self.prj_base_path or not self.project_name:
+            print("Error: 'project_path' or 'project_name' is missing or invalid")
+            raise ValueError("'project_path' or 'project_name' is missing in the config file.")
+
+        self.asset_library_dir_path = os.path.join(self.prj_base_path, self.project_name, "asset_library")
+        print(f"Asset path: {self.asset_library_dir_path}")
+
         self.setWindowTitle("Asset Manager")
         self.setMinimumSize(800, 450)
 
@@ -55,6 +67,7 @@ class AssetManagerUI(QtWidgets.QDialog):
         self.create_connections()
 
         self.update_create_asset_button_visibility()
+        self.get_data_for_ui()
 
     def init_styles(self):
         font = "Segoe UI"
@@ -108,8 +121,7 @@ class AssetManagerUI(QtWidgets.QDialog):
         self.asset_name_combo.addItems(["Asset1", "Asset2", "Asset3"])
         self.asset_name_combo.setStyleSheet("font: 9pt 'Segoe UI';")
 
-        self.assets_list = QtWidgets.QListWidget()
-        self.assets_list.setStyleSheet(self.LIST_STYLE)
+        # ✅ REMOVED self.assets_list
 
         self.versions_list = QtWidgets.QListWidget()
         self.versions_list.setStyleSheet(self.LIST_STYLE)
@@ -119,9 +131,9 @@ class AssetManagerUI(QtWidgets.QDialog):
         self.info_image.setStyleSheet("background-color: #555; color: #ccc;")
         self.info_image.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.info_name     = QtWidgets.QLabel("-");     self.info_name.setStyleSheet(self.LABEL_STYLE)
-        self.info_version  = QtWidgets.QLabel("-");     self.info_version.setStyleSheet(self.LABEL_STYLE)
-        self.info_artist   = QtWidgets.QLabel("-");     self.info_artist.setStyleSheet(self.LABEL_STYLE)
+        self.asset_name     = QtWidgets.QLabel("-");     self.asset_name.setStyleSheet(self.LABEL_STYLE)
+        self.file_path  = QtWidgets.QLabel("-");     self.file_path.setStyleSheet(self.LABEL_STYLE)
+        self.artist_name   = QtWidgets.QLabel("-");     self.artist_name.setStyleSheet(self.LABEL_STYLE)
         self.info_modified = QtWidgets.QLabel("-");     self.info_modified.setStyleSheet(self.LABEL_STYLE)
         self.info_notes    = QtWidgets.QLabel("-");     self.info_notes.setStyleSheet(self.LABEL_STYLE)
 
@@ -144,8 +156,6 @@ class AssetManagerUI(QtWidgets.QDialog):
         self.separator = QtWidgets.QFrame()
         self.separator.setFrameShape(QtWidgets.QFrame.HLine)
         self.separator.setStyleSheet("color: #555;")
-
-
 
     def create_layouts(self):
         self.header = QtWidgets.QHBoxLayout()
@@ -178,18 +188,18 @@ class AssetManagerUI(QtWidgets.QDialog):
         self.filt.addStretch()
         self.filt.setContentsMargins(10, 0, 10, 0)
 
+        # ✅ UPDATED layout: remove assets_list
         self.lists_group = QtWidgets.QHBoxLayout()
-        self.lists_group.addWidget(self.assets_list, 1)
-        self.lists_group.addWidget(self.versions_list, 1)
+        self.lists_group.addWidget(self.versions_list, 1)  # keep only versions_list
 
         self.info = QtWidgets.QVBoxLayout()
         self.info.addWidget(self.info_image, alignment=QtCore.Qt.AlignCenter)
         self.form = QtWidgets.QFormLayout()
         self.form.setLabelAlignment(QtCore.Qt.AlignRight)
         self.form.setFormAlignment(QtCore.Qt.AlignLeft)
-        self.form.addRow("Name:",     self.info_name)
-        self.form.addRow("Version:",  self.info_version)
-        self.form.addRow("Artist:",   self.info_artist)
+        self.form.addRow("Asset Name:",self.asset_name)
+        self.form.addRow("Artist Name:",   self.artist_name)
+        self.form.addRow("File Path:",  self.file_path)
         self.form.addRow("Modified:", self.info_modified)
         self.form.addRow("Notes:",    self.info_notes)
         self.info.addLayout(self.form)
@@ -234,8 +244,11 @@ class AssetManagerUI(QtWidgets.QDialog):
         self.publish_checkbox.toggled.connect(self.toggle_publish_button)
         self.create_asset_btn.clicked.connect(self.create_new_asset)
         self.dep_combo.currentTextChanged.connect(self.update_create_asset_button_visibility)
-        self.publish_btn.clicked.connect(self.check_comment_and_publish)
-
+        self.publish_btn.clicked.connect(self.publish_action)
+        self.dep_combo.currentTextChanged.connect(self.update_create_asset_button_visibility)
+        self.dep_combo.currentTextChanged.connect(self.get_data_for_ui)  # Add this line
+        self.type_combo.currentTextChanged.connect(self.get_data_for_ui)  # Add this line
+        
     def toggle_publish_button(self):
         is_checked = self.publish_checkbox.isChecked()
         self.publish_btn.setVisible(is_checked)
@@ -259,42 +272,37 @@ class AssetManagerUI(QtWidgets.QDialog):
             return
 
         asset_creator = CreateNewAsset()
-        department_list, asset_type,_= self.get_ui_info_values()
-
-        # Retrieve base path and project name from the config
-        base_path = self.config.get("base_path")  # Default if not found
-        project_name = self.config.get("project_name")  # Default if not found
-
-        # Construct the full path
-        full_path = os.path.join(base_path, project_name, "asset")
+        department_list, _, asset_type, _, _= self.get_data_from_ui()
 
         # Ensure the asset is created under the correct project folder and department
         for department in department_list:
             # Now create the asset under each department
-            asset_creator.create_new_asset(full_path, department, asset_type, text)
+            asset_creator.create_new_asset(self.asset_library_dir_path, department, asset_type, text)
 
-    def publish(self):
-
-        # Retrieve base path and project name from the config
-        base_path = self.config.get("base_path")  # Default if not found
-        project_name = self.config.get("project_name")  # Default if not found
-        # Construct the full path
-        full_path = os.path.join(base_path, project_name, "asset")
-
-        _, asset_type,current_department= self.get_ui_info_values()
-
-
-        AssetPublishManager.prepare_publish_folder(asset_dir_path=full_path,department_name=current_department,)
 
     def check_comment_and_publish(self):
-        comment = self.comment_box.toPlainText().strip()
-        if not comment:
+        self.comment = self.comment_box.toPlainText().strip()
+        if not self.comment:
             QtWidgets.QMessageBox.warning(self, "Error", "Publish comment cannot be empty.")
         else:
-            print(f"Publish comment: {comment}")
+            print(f"Publish comment: {self.comment}")
+
+    def publish_action(self):
+        
+        _, _, asset_type, current_department, current_asset_name = self.get_data_from_ui()
+
+        
+        self.check_comment_and_publish()
+        self.get_publish_info()
+        self.get_data_for_ui()
+        file_utils = FileUtils()
+        # Construct the directory path to fetch assets based on department and asset type
+        dir_path = os.path.join(self.asset_library_dir_path, current_department, asset_type,current_asset_name)
+        
+        file_utils.save_maya_file(dir_path, current_asset_name)
 
 
-    def get_ui_info_values(self):
+    def get_data_from_ui(self):
         # Get the asset type (the selected item in the asset type combo box)
         asset_type = self.type_combo.currentText()
 
@@ -303,8 +311,68 @@ class AssetManagerUI(QtWidgets.QDialog):
 
         # Get all department names (items in the department combo box)
         department_list = [self.dep_combo.itemText(i) for i in range(self.dep_combo.count())]
+        current_asset_name = self.asset_name_combo.currentText()
+            
+        return department_list, self.project_name, asset_type, current_department, current_asset_name
 
-        return department_list, asset_type, current_department
+
+    def get_data_for_ui(self):
+        _, _, asset_type, current_department, _ = self.get_data_from_ui()
+
+
+        # Create an instance of FileUtils to interact with the filesystem
+        file_utils = FileUtils()
+
+        # Construct the directory path to fetch assets based on department and asset type
+        dir_path = os.path.join(self.asset_library_dir_path, current_department, asset_type)
+
+        # Fetch the list of assets (directories in the specified path)
+        self.asset_list = file_utils.fetch_directories(dir_path)
+
+        # Clear any existing items in the asset_name_combo
+        self.asset_name_combo.clear()
+
+        # Add the fetched asset names to the combo box
+        self.asset_name_combo.addItems(self.asset_list)
+
+        # Optional: print the assets to the console for debugging
+        print("Available assets:", self.asset_list)
+
+
+    def get_publish_info(self):
+        _, self.project_name, asset_type, current_department, current_asset_name = self.get_data_from_ui()
+        
+        artist_name = getpass.getuser()
+        
+        # Define the file location path
+        file_location = os.path.join(self.asset_library_dir_path, current_department, asset_type, current_asset_name)
+        
+        # Extract the file name from the file location
+        file_name = os.path.basename(file_location)  # Extracts the file name from the full path
+        
+        # Notes from the UI (if available)
+        notes = self.comment_box.toPlainText().strip()
+
+        
+
+        # Now the file name becomes the key and the data is the value (as a dictionary)
+        publish_info = {
+            file_name: {
+                "artist_name": artist_name,
+                "department": current_department,
+                "asset_type": asset_type,
+                "asset_name": current_asset_name,
+                "file_location": file_location,
+                "publish_note": notes
+            }
+        }
+
+        file_utils = FileUtils()  # ✅ instantiate
+        file_utils.write_data(data=publish_info, file_path=file_location, asset_name = current_asset_name,format="json")
+
+        
+        return publish_info
+
 
 
 def show_asset_manager_ui():

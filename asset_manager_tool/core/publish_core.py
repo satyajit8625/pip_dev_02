@@ -16,7 +16,7 @@ class AssetPublishManager:
             raise ValueError("Config must include 'project_path' and 'project_name'")
         
         # Full base publish path
-        self.asset_dir_path = os.path.join(self.project_path, self.project_name, "asset")
+        self.asset_library_dir_path = os.path.join(self.project_path, self.project_name, "asset_library")
 
     def load_config(self, path):
         if not os.path.exists(path):
@@ -24,9 +24,9 @@ class AssetPublishManager:
         with open(path, 'r') as f:
             return json.load(f)
 
-    def prepare_publish_folder(self,asset_dir_path,department_name,asset_name,file_type):
+    def prepare_publish_folder(self,asset_library_dir_path,department_name,asset_name,file_type):
 
-        path = os.path.join(self.asset_dir_path,department_name,asset_name)
-        FileUtils.create_dir(path,file_type)
+        path = os.path.join(self.asset_library_dir_path,department_name,asset_name)
+        FileUtils.create_directory(path,file_type)
         
 
